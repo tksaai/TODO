@@ -1,0 +1,33 @@
+{
+  email your-email@example.com
+}
+
+your-ddns.example.com {
+  @preflight method OPTIONS
+  handle @preflight {
+    header Access-Control-Allow-Origin "{$TASK_MUSE_ORIGIN}"
+    header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type, X-Task-Muse-Key"
+    header Access-Control-Max-Age "86400"
+    respond "" 204
+  }
+
+  header {
+    Access-Control-Allow-Origin "{$TASK_MUSE_ORIGIN}"
+    Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers "Content-Type, X-Task-Muse-Key"
+    Access-Control-Max-Age "86400"
+    Vary "Origin"
+    X-Content-Type-Options "nosniff"
+  }
+
+  @allowed {
+    header X-Task-Muse-Key "{$TASK_MUSE_LLM_KEY}"
+    path /api/tags /api/chat
+  }
+  handle @allowed {
+    reverse_proxy 127.0.0.1:11434
+  }
+
+  respond "Unauthorized" 401
+}

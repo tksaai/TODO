@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+.chrome-profile-*/
+.edge-profile/
+desktop.png
+mobile.png
+edge-mobile.png
