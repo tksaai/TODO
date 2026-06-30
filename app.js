@@ -26,9 +26,13 @@ const appConfig = window.TASK_MUSE_CONFIG || {};
 
 const defaultSettings = {
   voiceEnabled: true,
+  voiceEngine: appConfig.voiceEngine || "webspeech",
   voiceName: "",
   voiceRate: 1,
   voicePitch: 1.08,
+  voicevoxEndpoint: appConfig.voicevoxEndpoint || "http://127.0.0.1:50021",
+  voicevoxSpeaker: Number(appConfig.voicevoxSpeaker || 1),
+  voicevoxApiKey: "",
   llmEnabled: false,
   llmEndpoint: appConfig.llmEndpoint || "",
   llmModel: appConfig.llmModel || "qwen2.5:0.5b",
@@ -41,6 +45,10 @@ let filter = "active";
 let searchQuery = "";
 let lastSpeech = "";
 let voices = [];
+let voicevoxSpeakers = [];
+let currentVoicevoxAudio = null;
+let currentVoicevoxAudioUrl = "";
+let currentVoicevoxController = null;
 
 const elements = {
   form: document.querySelector("#taskForm"),
@@ -59,9 +67,14 @@ const elements = {
   speech: document.querySelector("#speechText"),
   voiceState: document.querySelector("#voiceState"),
   voiceEnabled: document.querySelector("#voiceEnabled"),
+  voiceEngine: document.querySelector("#voiceEngine"),
   voiceSelect: document.querySelector("#voiceSelect"),
   voiceRate: document.querySelector("#voiceRate"),
   voicePitch: document.querySelector("#voicePitch"),
+  voicevoxEndpoint: document.querySelector("#voicevoxEndpoint"),
+  voicevoxSpeaker: document.querySelector("#voicevoxSpeaker"),
+  voicevoxApiKey: document.querySelector("#voicevoxApiKey"),
+  loadVoicevox: document.querySelector("#loadVoicevoxButton"),
   llmEnabled: document.querySelector("#llmEnabled"),
   llmEndpoint: document.querySelector("#llmEndpoint"),
   llmModel: document.querySelector("#llmModel"),
@@ -107,6 +120,12 @@ function bindEvents() {
     saveSettings();
   });
 
+  elements.voiceEngine.addEventListener("change", () => {
+    settings.voiceEngine = elements.voiceEngine.value;
+    saveSettings();
+    updateVoiceControls();
+  });
+
   elements.voiceSelect.addEventListener("change", () => {
     settings.voiceName = elements.voiceSelect.value;
     saveSettings();
@@ -121,6 +140,24 @@ function bindEvents() {
     settings.voicePitch = Number(elements.voicePitch.value);
     saveSettings();
   });
+
+  elements.voicevoxEndpoint.addEventListener("change", () => {
+    settings.voicevoxEndpoint = normalizeEndpoint(elements.voicevoxEndpoint.value || defaultSettings.voicevoxEndpoint);
+    elements.voicevoxEndpoint.value = settings.voicevoxEndpoint;
+    saveSettings();
+  });
+
+  elements.voicevoxSpeaker.addEventListener("change", () => {
+    settings.voicevoxSpeaker = Number(elements.voicevoxSpeaker.value) || defaultSettings.voicevoxSpeaker;
+    saveSettings();
+  });
+
+  elements.voicevoxApiKey.addEventListener("change", () => {
+    settings.voicevoxApiKey = elements.voicevoxApiKey.value.trim();
+    saveSettings();
+  });
+
+  elements.loadVoicevox.addEventListener("click", loadVoicevoxSpeakers);
 
   elements.llmEnabled.addEventListener("change", () => {
     settings.llmEnabled = elements.llmEnabled.checked;
@@ -410,10 +447,31 @@ function showSpeech(text, state) {
   elements.voiceState.textContent = state;
 }
 
-function speak(text) {
-  if (!settings.voiceEnabled || !("speechSynthesis" in window)) return;
+async function speak(text) {
+  if (!settings.voiceEnabled) return;
+
+  if (settings.voiceEngine === "voicevox") {
+    try {
+      await speakWithVoicevox(text);
+      return;
+    } catch (error) {
+      console.warn(error);
+      elements.voiceState.textContent = "VOICEVOX失敗";
+      if ("speechSynthesis" in window) {
+        speakWithWebSpeech(text);
+      }
+      return;
+    }
+  }
+
+  speakWithWebSpeech(text);
+}
+
+function speakWithWebSpeech(text) {
+  if (!("speechSynthesis" in window)) return;
 
   window.speechSynthesis.cancel();
+  stopVoicevoxAudio();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "ja-JP";
   utterance.rate = settings.voiceRate;
@@ -434,6 +492,82 @@ function speak(text) {
   };
 
   window.speechSynthesis.speak(utterance);
+}
+
+async function speakWithVoicevox(text) {
+  stopVoicevoxAudio();
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+
+  const endpoint = normalizeEndpoint(settings.voicevoxEndpoint);
+  ensureUsableEndpoint(endpoint, "VOICEVOX");
+  const speaker = Number(settings.voicevoxSpeaker) || defaultSettings.voicevoxSpeaker;
+  currentVoicevoxController = new AbortController();
+  const signal = currentVoicevoxController.signal;
+
+  elements.voiceState.textContent = "VOICEVOX生成中";
+  const audioQueryUrl = `${endpoint}/audio_query?${new URLSearchParams({
+    text,
+    speaker: String(speaker)
+  })}`;
+  const queryResponse = await fetch(audioQueryUrl, {
+    method: "POST",
+    headers: buildVoicevoxHeaders({ json: false }),
+    signal
+  });
+  if (!queryResponse.ok) {
+    throw new Error(`VOICEVOX audio_query failed: ${queryResponse.status}`);
+  }
+
+  const query = await queryResponse.json();
+  query.speedScale = Number(settings.voiceRate) || 1;
+  query.pitchScale = (Number(settings.voicePitch) || 1) - 1;
+
+  const synthesisUrl = `${endpoint}/synthesis?${new URLSearchParams({
+    speaker: String(speaker)
+  })}`;
+  const synthesisResponse = await fetch(synthesisUrl, {
+    method: "POST",
+    headers: buildVoicevoxHeaders(),
+    signal,
+    body: JSON.stringify(query)
+  });
+  if (!synthesisResponse.ok) {
+    throw new Error(`VOICEVOX synthesis failed: ${synthesisResponse.status}`);
+  }
+
+  const audioBlob = await synthesisResponse.blob();
+  currentVoicevoxAudioUrl = URL.createObjectURL(audioBlob);
+  currentVoicevoxAudio = new Audio(currentVoicevoxAudioUrl);
+  currentVoicevoxAudio.onplay = () => {
+    elements.voiceState.textContent = "VOICEVOX再生中";
+  };
+  currentVoicevoxAudio.onended = () => {
+    elements.voiceState.textContent = settings.llmEnabled ? "LLM" : "待機中";
+    stopVoicevoxAudio({ keepCurrent: true });
+  };
+  currentVoicevoxAudio.onerror = () => {
+    elements.voiceState.textContent = "VOICEVOX音声なし";
+    stopVoicevoxAudio({ keepCurrent: true });
+  };
+  await currentVoicevoxAudio.play();
+}
+
+function stopVoicevoxAudio({ keepCurrent = false } = {}) {
+  if (currentVoicevoxController) {
+    currentVoicevoxController.abort();
+    currentVoicevoxController = null;
+  }
+  if (currentVoicevoxAudio && !keepCurrent) {
+    currentVoicevoxAudio.pause();
+    currentVoicevoxAudio.currentTime = 0;
+  }
+  if (currentVoicevoxAudioUrl) {
+    URL.revokeObjectURL(currentVoicevoxAudioUrl);
+  }
+  currentVoicevoxAudioUrl = "";
+  currentVoicevoxAudio = null;
 }
 
 function populateVoices() {
@@ -472,10 +606,80 @@ function populateVoices() {
   }
 }
 
+async function loadVoicevoxSpeakers() {
+  const endpoint = normalizeEndpoint(elements.voicevoxEndpoint.value || defaultSettings.voicevoxEndpoint);
+  settings.voicevoxEndpoint = endpoint;
+  settings.voicevoxApiKey = elements.voicevoxApiKey.value.trim();
+  saveSettings();
+
+  elements.loadVoicevox.disabled = true;
+  elements.voiceState.textContent = "話者取得中";
+
+  try {
+    ensureUsableEndpoint(endpoint, "VOICEVOX");
+    const response = await fetch(`${endpoint}/speakers`, {
+      headers: buildVoicevoxHeaders({ json: false })
+    });
+    if (!response.ok) {
+      throw new Error(`VOICEVOX speakers failed: ${response.status}`);
+    }
+
+    const speakers = await response.json();
+    voicevoxSpeakers = flattenVoicevoxSpeakers(speakers);
+    renderVoicevoxSpeakers();
+    elements.voiceState.textContent = "VOICEVOX接続中";
+    showSpeech("VOICEVOXの話者を取得できました。次の再生からこの声を使えるよ。", "VOICEVOX");
+    speak("VOICEVOXの話者を取得できました。次の再生からこの声を使えるよ。");
+  } catch (error) {
+    console.warn(error);
+    elements.voiceState.textContent = "VOICEVOX未接続";
+    showSpeech(buildVoicevoxErrorMessage(error), "VOICEVOX");
+    speakWithWebSpeech(buildVoicevoxErrorMessage(error));
+  } finally {
+    elements.loadVoicevox.disabled = false;
+  }
+}
+
+function flattenVoicevoxSpeakers(speakers) {
+  if (!Array.isArray(speakers)) return [];
+  return speakers.flatMap((speaker) => {
+    const styles = Array.isArray(speaker.styles) ? speaker.styles : [];
+    return styles.map((style) => ({
+      id: Number(style.id),
+      label: `${speaker.name} / ${style.name}`
+    }));
+  }).filter((speaker) => Number.isFinite(speaker.id));
+}
+
+function renderVoicevoxSpeakers() {
+  elements.voicevoxSpeaker.replaceChildren();
+  const speakers = voicevoxSpeakers.length
+    ? voicevoxSpeakers
+    : [{ id: settings.voicevoxSpeaker || defaultSettings.voicevoxSpeaker, label: `話者 ID ${settings.voicevoxSpeaker || defaultSettings.voicevoxSpeaker}` }];
+
+  speakers.forEach((speaker) => {
+    elements.voicevoxSpeaker.append(new Option(speaker.label, String(speaker.id)));
+  });
+
+  const selected = String(settings.voicevoxSpeaker || defaultSettings.voicevoxSpeaker);
+  if (speakers.some((speaker) => String(speaker.id) === selected)) {
+    elements.voicevoxSpeaker.value = selected;
+  } else {
+    settings.voicevoxSpeaker = speakers[0].id;
+    elements.voicevoxSpeaker.value = String(settings.voicevoxSpeaker);
+    saveSettings();
+  }
+}
+
 function applySettingsToControls() {
   elements.voiceEnabled.checked = settings.voiceEnabled;
+  elements.voiceEngine.value = settings.voiceEngine;
   elements.voiceRate.value = settings.voiceRate;
   elements.voicePitch.value = settings.voicePitch;
+  elements.voicevoxEndpoint.value = settings.voicevoxEndpoint;
+  elements.voicevoxApiKey.value = settings.voicevoxApiKey;
+  renderVoicevoxSpeakers();
+  updateVoiceControls();
   elements.llmEnabled.checked = settings.llmEnabled;
   elements.llmEndpoint.value = settings.llmEndpoint;
   elements.llmModel.value = settings.llmModel;
@@ -536,9 +740,20 @@ function buildLlmHeaders({ json = true } = {}) {
   return headers;
 }
 
-function ensureUsableEndpoint(endpoint) {
+function buildVoicevoxHeaders({ json = true } = {}) {
+  const headers = {};
+  if (json) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (settings.voicevoxApiKey) {
+    headers["X-Task-Muse-Key"] = settings.voicevoxApiKey;
+  }
+  return headers;
+}
+
+function ensureUsableEndpoint(endpoint, label = "LLM") {
   if (!endpoint) {
-    throw new Error("LLM endpoint is empty");
+    throw new Error(`${label} endpoint is empty`);
   }
 
   const url = new URL(endpoint);
@@ -547,7 +762,7 @@ function ensureUsableEndpoint(endpoint) {
   const deployedOverHttps = window.location.protocol === "https:";
 
   if (deployedOverHttps && url.protocol !== "https:" && !isLocal) {
-    throw new Error("Cloudflare PagesからDDNSへ接続する場合はHTTPSが必要です");
+    throw new Error(`${label}へ接続する場合はHTTPSが必要です`);
   }
 }
 
@@ -560,6 +775,26 @@ function buildLlmErrorMessage(error) {
     return "Cloudflare PagesからDDNSへ接続するにはHTTPSが必要です。URLを確認してね。";
   }
   return "LLMサーバーにはまだ接続できません。テンプレートでも褒められるよ。";
+}
+
+function buildVoicevoxErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("empty")) {
+    return "VOICEVOXのURLを設定してから話者取得してね。";
+  }
+  if (message.includes("HTTPS")) {
+    return "公開版からVOICEVOXへ接続するにはHTTPSが必要です。DDNSプロキシのURLを確認してね。";
+  }
+  return "VOICEVOXに接続できません。エンジン起動、URL、キーを確認してね。";
+}
+
+function updateVoiceControls() {
+  const isVoicevox = settings.voiceEngine === "voicevox";
+  elements.voiceSelect.disabled = isVoicevox;
+  elements.voicevoxEndpoint.disabled = !isVoicevox;
+  elements.voicevoxSpeaker.disabled = !isVoicevox;
+  elements.voicevoxApiKey.disabled = !isVoicevox;
+  elements.loadVoicevox.disabled = !isVoicevox;
 }
 
 function choose(items) {

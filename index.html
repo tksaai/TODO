@@ -111,9 +111,32 @@
               </label>
             </div>
             <label class="compact-field">
+              <span>エンジン</span>
+              <select id="voiceEngine">
+                <option value="webspeech">Web Speech</option>
+                <option value="voicevox">VOICEVOX</option>
+              </select>
+            </label>
+            <label class="compact-field">
               <span>声</span>
               <select id="voiceSelect"></select>
             </label>
+            <label class="compact-field">
+              <span>VOICEVOX URL</span>
+              <input id="voicevoxEndpoint" type="url" value="http://127.0.0.1:50021" placeholder="https://your-ddns.example.com/voicevox" spellcheck="false">
+            </label>
+            <label class="compact-field">
+              <span>VOICEVOX話者</span>
+              <select id="voicevoxSpeaker"></select>
+            </label>
+            <label class="compact-field">
+              <span>VOICEVOXキー</span>
+              <input id="voicevoxApiKey" type="password" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="llm-actions">
+              <button class="ghost-button" id="loadVoicevoxButton" type="button">話者取得</button>
+              <code>127.0.0.1:50021</code>
+            </div>
             <div class="range-grid">
               <label>
                 <span>速さ</span>

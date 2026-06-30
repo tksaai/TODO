@@ -6,7 +6,7 @@
 
 - アプリ本体: Cloudflare Pages に静的デプロイ
 - タスク保存: ブラウザの `localStorage`
-- 音声: Web Speech API
+- 音声: Web Speech API / VOICEVOX
 - LLM: DDNS で公開したサーバーPC上の Ollama へ HTTPS で接続
 
 ## Cloudflare Pages へのデプロイ
@@ -64,14 +64,20 @@ npx wrangler pages deploy . --project-name task-muse
 
 ## LLM サーバーPC
 
-サーバーPCには Ollama と Caddy を入れます。
+サーバーPCには Ollama、VOICEVOX Engine、Caddy を入れます。
 
 ```powershell
 ollama pull qwen2.5:0.5b
 ollama serve
 ```
 
-DDNS ホスト名を `server-pc/Caddyfile.example` の `your-ddns.example.com` に設定し、Cloudflare Pages のURLを `TASK_MUSE_ORIGIN` に設定します。この設定例では、APIキー付きで `/api/tags` と `/api/chat` だけを Ollama に転送します。
+VOICEVOX Engine は通常 `127.0.0.1:50021` で起動します。Docker CPU版なら以下です。
+
+```powershell
+docker run --rm -p "127.0.0.1:50021:50021" voicevox/voicevox_engine:cpu-latest
+```
+
+DDNS ホスト名を `server-pc/Caddyfile.example` の `your-ddns.example.com` に設定し、Cloudflare Pages のURLを `TASK_MUSE_ORIGIN` に設定します。この設定例では、APIキー付きで `/api/tags` と `/api/chat` を Ollama に、`/voicevox/*` を VOICEVOX Engine に転送します。
 
 ```powershell
 .\server-pc\env.example.ps1
@@ -88,12 +94,21 @@ caddy run --config .\server-pc\Caddyfile.example
 - モデル: `qwen2.5:0.5b`
 - APIキー: `TASK_MUSE_LLM_KEY` と同じ値
 
+VOICEVOXを使う場合は、音声エンジンを `VOICEVOX` に切り替えて以下を設定します。
+
+- VOICEVOX URL: `https://your-ddns.example.com/voicevox`
+- VOICEVOXキー: `TASK_MUSE_LLM_KEY` と同じ値
+- 「話者取得」を押して話者を選択
+
 `config.js` に既定値を書いておくこともできます。
 
 ```js
 window.TASK_MUSE_CONFIG = {
   llmEndpoint: "https://your-ddns.example.com",
-  llmModel: "qwen2.5:0.5b"
+  llmModel: "qwen2.5:0.5b",
+  voiceEngine: "voicevox",
+  voicevoxEndpoint: "https://your-ddns.example.com/voicevox",
+  voicevoxSpeaker: 1
 };
 ```
 

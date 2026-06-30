@@ -29,5 +29,14 @@ your-ddns.example.com {
     reverse_proxy 127.0.0.1:11434
   }
 
+  handle_path /voicevox/* {
+    @voicevox_authorized header X-Task-Muse-Key "{$TASK_MUSE_LLM_KEY}"
+    handle @voicevox_authorized {
+      reverse_proxy 127.0.0.1:50021
+    }
+
+    respond "Unauthorized" 401
+  }
+
   respond "Unauthorized" 401
 }
