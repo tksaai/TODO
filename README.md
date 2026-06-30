@@ -60,7 +60,7 @@ CLI で直接アップロードする場合は以下です。
 npx wrangler pages deploy . --project-name task-muse
 ```
 
-`_headers` と `_redirects` は Cloudflare Pages 用です。HTTPS ページから DDNS の LLM サーバーへ接続するため、`connect-src` は `https:` を許可しています。
+`_headers` はCloudflare用のセキュリティヘッダーです。HTTPS ページから DDNS の LLM サーバーへ接続するため、`connect-src` は `https:` を許可しています。Workers Static Assets のSPA fallbackは `wrangler.toml` の `not_found_handling = "single-page-application"` で処理します。
 
 ## LLM サーバーPC
 

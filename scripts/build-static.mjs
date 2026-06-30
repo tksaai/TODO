@@ -5,8 +5,7 @@ const files = [
   "style.css",
   "app.js",
   "config.js",
-  "_headers",
-  "_redirects"
+  "_headers"
 ];
 
 await rm("dist", { recursive: true, force: true });
