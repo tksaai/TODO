@@ -11,6 +11,18 @@
 
 ## Cloudflare Pages へのデプロイ
 
+### いまのCloudflare画面でWorkerとして作る場合
+
+Cloudflareの新しい作成画面で `Create a Worker` と表示される場合は、Workers Static Assets としてデプロイできます。
+
+```text
+Project name: todo
+Build command: npm run build
+Deploy command: npx wrangler deploy
+```
+
+`Project name` は小文字・数字・ハイフンだけなので、`TODO` ではなく `todo` にしてください。
+
 ### GitHub連携
 
 この方式を推奨します。
